@@ -1,5 +1,6 @@
 
-import System.Random (newStdGen)
+import Control.Monad.Random (getRandom, randomRIO)
+import System.Random (newStdGen, StdGen)
 import System.Random.Shuffle (shuffle')
 
 import Data.List (maximumBy, nub)
@@ -44,10 +45,11 @@ getPossibleChains chain dominos =
 
 -- From the library but not exposed for some reason
 undirected :: Graph -> Graph
-undirected g  = buildG (bounds g) (edges g ++ reverseE g)
+undirected g  = buildG (bounds g) (edges g ++ reverseENoRepeat g)
 
-reverseE  :: Graph -> [Edge]
-reverseE g   = [ (w, v) | (v, w) <- edges g , v /=  w]
+-- Flip the edges, but don't include edges that connect a node to itself
+reverseENoRepeat  :: Graph -> [Edge]
+reverseENoRepeat g   = [ (w, v) | (v, w) <- edges g , v /=  w]
 
 dominosToGraph :: DominoPile -> Graph
 dominosToGraph dominos = 
@@ -65,38 +67,40 @@ removeDomino g domino =
         in g // [(sideOne, newEdgesOne), (sideTwo, newEdgesTwo)]
 
 dominoTraversal :: (Int, Int) -> Graph -> Tree (Int, Int)
-dominoTraversal currentDomino g = 
-        let (_, follow) = currentDomino
-         in Data.Tree.Node currentDomino [dominoTraversal (follow, p) (removeDomino g (follow, p)) | p <- g!follow]
+dominoTraversal currentDomino@(_, follow) g = 
+         Data.Tree.Node currentDomino [dominoTraversal (follow, p) (removeDomino g (follow, p)) | p <- g!follow]
 
-foldFn :: Domino -> [(DominoChain, Int)] -> (DominoChain, Int)
-foldFn x [] = 
-        let mySum = (fst x) + (snd x)
-         in ([x], mySum)
+findOptimalChain :: Domino -> DominoPile -> (DominoChain, Int)
+findOptimalChain startDomino pile = foldTree foldFn dominoChains
+    where dominoGraph = dominosToGraph pile
+          dominoChains = dominoTraversal startDomino dominoGraph
+          foldFn :: Domino -> [(DominoChain, Int)] -> (DominoChain, Int)
+          foldFn x [] = 
+                  let mySum = (fst x) + (snd x)
+                   in ([x], mySum)
+          foldFn x xs = 
+                  let mySum = (fst x) + (snd x)
+                      (bestChain, bestSum) = maximumBy (\x y -> compare (snd x) (snd y)) xs
+                  in (x:bestChain, mySum + bestSum)
 
-foldFn x xs = 
-        let mySum = (fst x) + (snd x)
-            (bestChain, bestSum) = maximumBy (\x y -> compare (snd x) (snd y)) xs
-        in (x:bestChain, mySum + bestSum)
+getAllDominoes :: Domino -> Int -> DominoPile
+getAllDominoes startDomino maxValue = fromList [(x, y) | x <- [0..maxValue], y <- [0..maxValue], x <= y, (x, y) /= startDomino] 
+
+sampleOptimal :: Int -> Int -> IO Int
+sampleOptimal maxValue numDominoes = do
+        rng <- newStdGen
+        let startDomino = (0, 0)
+            allDominoes = toList $ getAllDominoes startDomino 12
+            n = length allDominoes
+            sample = shuffle' allDominoes (length allDominoes) rng
+            dominoList = (take numDominoes sample)
+            pile = fromList dominoList :: DominoPile
+            (_, score) = findOptimalChain startDomino pile
+        return score
 
 main :: IO ()
 main = do
-  let allDominoes = [(x, y) | x <- [0..12], y <- [0..12], x <= y] 
-  rng <- newStdGen
-  let sample = shuffle' allDominoes (length allDominoes) rng
-
-  let dominoList = (take 32 sample)
-      pile = fromList dominoList :: DominoPile
-      graph = dominosToGraph pile
-      --chains = getPossibleChains [(0, 0)] pile
-      chainsG = dominoTraversal (0, 0) graph
-
-  putStrLn $ "Total Dominoes: " ++ show (dominoList)
-  --putStrLn $ "Total Chains: " ++ show (length chains)
-
-  --putStrLn $ show $ foldTree (\x xs -> if null xs then (fst x) + (snd x) else (fst x) + (snd x) + (maximum xs)) chainsG
-  putStrLn $ show $ foldTree foldFn chainsG
-  --putStrLn $ show $ graph
-  --putStr $ drawTree $ fmap show $ chainsG
-
-
+  let startDomino = (0, 0)
+  let allDominoes = getAllDominoes startDomino 12
+  scoreOne <- sequence $ replicate 100000 $ (sampleOptimal 12 16)
+  Prelude.mapM_ (putStrLn . show) scoreOne
