@@ -95,12 +95,39 @@ sampleOptimal maxValue numDominoes = do
             sample = shuffle' allDominoes (length allDominoes) rng
             dominoList = (take numDominoes sample)
             pile = fromList dominoList :: DominoPile
-            (_, score) = findOptimalChain startDomino pile
-        return score
+            (solution, score) = findOptimalChain startDomino pile
+        return (length solution)
+
+--randomTraversal :: (Int, Int) -> Graph -> IO Tree (Int, Int)
+randomTraversal currentDomino@(_, follow) g = 
+            if (length (g!follow)) > 0
+               then do
+                    rng <- newStdGen
+                    let potential = g!follow
+                        sample = shuffle' potential (length potential) rng
+                        next = ((take 1 sample) !! 0) :: Int
+                    continue <- randomTraversal (follow, next) (removeDomino g (follow, next))
+                    return (Data.Tree.Node currentDomino [continue])
+               else do
+                    return (Data.Tree.Node currentDomino [])
+                    
+
+sampleRandom :: Int -> Int -> IO Int
+sampleRandom maxValue numDominoes = do
+        rng <- newStdGen
+        let startDomino = (0, 0)
+            allDominoes = toList $ getAllDominoes startDomino 12
+            n = length allDominoes
+            sample = shuffle' allDominoes (length allDominoes) rng
+            dominoList = (take numDominoes sample)
+            pile = fromList dominoList :: DominoPile
+            dominoGraph = dominosToGraph pile
+        solution <- randomTraversal startDomino dominoGraph
+        return (length solution)
 
 main :: IO ()
 main = do
   let startDomino = (0, 0)
   let allDominoes = getAllDominoes startDomino 12
-  scoreOne <- sequence $ replicate 100000 $ (sampleOptimal 12 16)
+  scoreOne <- sequence $ replicate 100000  $ (sampleRandom 12 16)
   Prelude.mapM_ (putStrLn . show) scoreOne
