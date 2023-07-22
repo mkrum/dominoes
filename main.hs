@@ -47,7 +47,7 @@ undirected :: Graph -> Graph
 undirected g  = buildG (bounds g) (edges g ++ reverseE g)
 
 reverseE  :: Graph -> [Edge]
-reverseE g   = [ (w, v) | (v, w) <- edges g ]
+reverseE g   = [ (w, v) | (v, w) <- edges g , v /=  w]
 
 dominosToGraph :: DominoPile -> Graph
 dominosToGraph dominos = 
@@ -64,13 +64,20 @@ removeDomino g domino =
             newEdgesTwo = [e | e <- g!sideTwo, e /= sideOne] 
         in g // [(sideOne, newEdgesOne), (sideTwo, newEdgesTwo)]
 
---dominoTraversal :: Int -> Graph -> Tree
-dominoTraversal currentIndex g = 
-        let potential = g!currentIndex
-         in if (length potential) == 0
-               -- Leaf
-               then []
-               else [Data.Tree.Node (currentIndex, p) (dominoTraversal p (removeDomino g (currentIndex, p))) | p <- potential]
+dominoTraversal :: (Int, Int) -> Graph -> Tree (Int, Int)
+dominoTraversal currentDomino g = 
+        let (_, follow) = currentDomino
+         in Data.Tree.Node currentDomino [dominoTraversal (follow, p) (removeDomino g (follow, p)) | p <- g!follow]
+
+foldFn :: Domino -> [(DominoChain, Int)] -> (DominoChain, Int)
+foldFn x [] = 
+        let mySum = (fst x) + (snd x)
+         in ([x], mySum)
+
+foldFn x xs = 
+        let mySum = (fst x) + (snd x)
+            (bestChain, bestSum) = maximumBy (\x y -> compare (snd x) (snd y)) xs
+        in (x:bestChain, mySum + bestSum)
 
 main :: IO ()
 main = do
@@ -78,14 +85,18 @@ main = do
   rng <- newStdGen
   let sample = shuffle' allDominoes (length allDominoes) rng
 
-  let dominoList = (take 16 sample)
-      pile = fromList  dominoList :: DominoPile
+  let dominoList = (take 32 sample)
+      pile = fromList dominoList :: DominoPile
       graph = dominosToGraph pile
-      chains = getPossibleChains [(1, 1)] pile
+      --chains = getPossibleChains [(0, 0)] pile
+      chainsG = dominoTraversal (0, 0) graph
 
   putStrLn $ "Total Dominoes: " ++ show (dominoList)
   --putStrLn $ "Total Chains: " ++ show (length chains)
-  putStrLn $ show $ graph
-  putStrLn $ show $ length $ dominoTraversal 0 graph 
-  putStr $ drawTree $ fmap show $ (dominoTraversal 0 graph) !! 0
+
+  --putStrLn $ show $ foldTree (\x xs -> if null xs then (fst x) + (snd x) else (fst x) + (snd x) + (maximum xs)) chainsG
+  putStrLn $ show $ foldTree foldFn chainsG
+  --putStrLn $ show $ graph
+  --putStr $ drawTree $ fmap show $ chainsG
+
 
