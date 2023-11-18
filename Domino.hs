@@ -5,12 +5,15 @@ import System.Random (newStdGen)
 import System.Random.Shuffle (shuffle')
 
 import Data.List (maximumBy, nub)
+import Data.Ord (comparing)
 import Data.Array (bounds, (!), (//))
 import Data.Set (Set, fromList, delete, toList)
 import qualified Data.Set (filter, size)
 import Data.Tree (foldTree, Tree(Node))
 
-import Data.Graph (graphFromEdges, Graph, Edge, buildG, edges)
+import Data.Graph (graphFromEdges, Graph, Edge, buildG, edges, outdegree)
+
+import Data.List.Split (chunksOf)
 
 type Domino = (Int, Int)
 type DominoChain = [Domino]
@@ -68,14 +71,34 @@ findOptimalChain startDomino pile = foldTree foldFn dominoChains
                       (bestChain, bestSum) = maximumBy (\x y -> compare (snd x) (snd y)) xsWithNothing
                   in (x:bestChain, mySum + bestSum)
 
-getAllDominoes :: Domino -> Int -> DominoPile
-getAllDominoes startDomino maxValue = fromList [(x, y) | x <- [0..maxValue], y <- [0..maxValue], x <= y, (x, y) /= startDomino] 
+getAllDominoes :: Int -> DominoPile
+getAllDominoes maxValue = fromList [(x, y) | x <- [0..maxValue], y <- [0..maxValue], x <= y] 
+
+getAllDominoesExcept :: Domino -> Int -> DominoPile
+getAllDominoesExcept startDomino maxValue = fromList [(x, y) | x <- [0..maxValue], y <- [0..maxValue], x <= y, (x, y) /= startDomino] 
+
+sampleDominoes :: Domino -> Int -> IO DominoPile
+sampleDominoes startDomino sampleSize = do
+        rng <- newStdGen
+        let allDominoes = toList $ getAllDominoesExcept startDomino 12
+            n = length allDominoes
+            sample = shuffle' allDominoes (length allDominoes) rng
+            dominoList = (take sampleSize sample)
+            pile = fromList dominoList :: DominoPile
+        return pile
+
+getScore :: DominoChain -> Int
+getScore pile = sum $ map (\x -> (fst x) + (snd x)) pile
+
+getStartingScore :: DominoPile -> Int
+getStartingScore pile = let dominoes = toList pile :: DominoChain
+                         in getScore dominoes
 
 sampleOptimal :: Int -> Int -> IO Int
 sampleOptimal maxValue numDominoes = do
         rng <- newStdGen
         let startDomino = (0, 0)
-            allDominoes = toList $ getAllDominoes startDomino 12
+            allDominoes = toList $ getAllDominoesExcept startDomino 12
             n = length allDominoes
             sample = shuffle' allDominoes (length allDominoes) rng
             dominoList = (take numDominoes sample)
@@ -96,18 +119,56 @@ randomTraversal currentDomino@(_, follow) g =
                     return chain
                else do
                     return [currentDomino]
+
+greedyTraversal :: (Int, Int) -> Graph -> [(Int, Int)]
+greedyTraversal currentDomino@(_, follow) g = 
+            if (length (g!follow)) > 0
+               then 
+                    let potential = g!follow
+                        next = maximum potential
+                        continue = greedyTraversal (follow, next) (removeDomino g (follow, next))
+                        chain = currentDomino: continue
+                     in chain
+               else [currentDomino]
                     
-sampleRandom :: Int -> Int -> Int -> IO Int
-sampleRandom numSamples maxValue numDominoes = do
+sampleRandom :: Int -> Domino -> DominoPile -> IO DominoChain
+sampleRandom numSamples startDomino pile = do
         rng <- newStdGen
         let startDomino = (0, 0)
-            allDominoes = toList $ getAllDominoes startDomino 12
-            n = length allDominoes
-            sample = shuffle' allDominoes (length allDominoes) rng
-            dominoList = (take numDominoes sample)
-            pile = fromList dominoList :: DominoPile
             dominoGraph = dominosToGraph pile
         solution <- sequence $ [randomTraversal startDomino dominoGraph | _ <- [1..numSamples]]
-        let longestChain = maximum $ map length solution
+        let longestChain = maximumBy (comparing getScore) solution
         return longestChain
 
+degrees :: Graph -> [Int]
+degrees graph = 
+        let maxValue = (snd . bounds) graph
+         in [length (graph!i) | i <- [0..maxValue]]
+
+hasPerfectChain :: Graph -> Bool
+hasPerfectChain graph = ((totalOddDegrees == 0) || (totalOddDegrees == 2))
+        where isOdd x = (x `mod` 2) ==  1
+              graphDegrees = degrees graph
+              oddDegreess = filter isOdd graphDegrees
+              totalOddDegrees = length oddDegreess
+
+shuffleAndSplitDominoes :: DominoPile -> Domino -> Int -> IO [DominoPile]
+shuffleAndSplitDominoes pile startDomino numPlayers = do
+        rng <- newStdGen
+        let totalPile = toList pile :: [Domino]
+            totalDominoes = length totalPile
+
+            shuffledPile = shuffle' totalPile totalDominoes rng
+
+            dominoesPerPlayer = totalDominoes `div` numPlayers
+            splits = (chunksOf dominoesPerPlayer shuffledPile) ++ [[]] 
+            playerPiles = take numPlayers splits
+            extra = (drop numPlayers splits) !! 0
+            addExtra = map (\x -> (fst x) ++ [(snd x)]) (zip (take (length extra) playerPiles) extra)
+            allSplits = addExtra ++ (drop (length extra) playerPiles)
+            allSplitsWithoutStart = map (filter (\x -> x /= startDomino)) allSplits
+            allPiles = map (\x -> fromList x :: DominoPile) allSplits
+
+            shuffledPiles = shuffle' allPiles numPlayers  rng
+
+         in return shuffledPiles
